@@ -1,0 +1,20 @@
+{
+  "name": "daily-note-worklog-linker",
+  "version": "1.0.0",
+  "description": "Obsidian plugin that appends the current daily note to a frontmatter list whenever a note is modified.",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+  },
+  "dependencies": {
+    "obsidian": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.6",
+    "esbuild": "0.25.5",
+    "tslib": "2.4.0",
+    "typescript": "^5.8.3"
+  }
+}

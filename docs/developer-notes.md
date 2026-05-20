@@ -21,6 +21,70 @@ The implementation lives in `src/main.ts` and is built into `main.js` with esbui
 4. The plugin checks cached frontmatter for the configured property.
 5. If today's daily note is missing, the plugin appends a wikilink to the property.
 
+## Program Flow Diagram
+
+The diagram below maps the runtime path to the concrete methods in `DailyNoteWorklogLinkerPlugin` and the Obsidian APIs they depend on. The main early-return gates are `onVaultModify()`, `isSuppressed()`, `isCurrentDailyNote()`, and `frontmatterAlreadyTracksDailyNote()`. The only write path goes through `app.fileManager.processFrontMatter()`.
+
+```mermaid
+flowchart TD
+  subgraph Obsidian["Obsidian APIs and components"]
+    A["app.vault.on('modify') event"]
+    O["app.metadataCache.getFileCache(file)?.frontmatter"]
+    P["app.fileManager.processFrontMatter(file, callback)"]
+    Q["app.metadataCache.fileToLinktext(...)"]
+  end
+
+  subgraph Plugin["DailyNoteWorklogLinkerPlugin methods"]
+    B["onVaultModify(file)"]
+    C{"file instanceof TFile && file.extension === 'md'?"}
+    D{"isSuppressed(file.path)?"}
+    E["queueFrontmatterUpdate(file)"]
+    F["ensureDailyNoteLink(path)"]
+    G["getCurrentDailyNoteReference(file)"]
+    H{"settings.ignoreDailyNote && isCurrentDailyNote(...)?"}
+    I["frontmatterAlreadyTracksDailyNote(...)"]
+    J{"Frontmatter already tracks today's link?"}
+    K["suppressedPaths.set(...)"]
+    L["processFrontMatter callback"]
+    M["toFrontmatterList(frontmatter[propertyName])"]
+    N{"isSameDailyNoteValue(...) duplicate?"}
+    R["values.push('[[...]]') and assign frontmatter[propertyName]"]
+  end
+
+  subgraph DailyNotes["Daily Notes resolution helpers"]
+    S["getDailyNotesPluginInstance()"]
+    T["getDailyNoteFormat() / getDailyNoteFolder()"]
+    U["resolveDailyNoteFile(formattedPath, configuredPath)"]
+  end
+
+  A --> B
+  B --> C
+  C -- No --> Z([Return])
+  C -- Yes --> D
+  D -- Yes --> Z
+  D -- No --> E
+  E --> F
+  F --> G
+  G --> S
+  S --> T
+  T --> U
+  U --> Q
+  G --> H
+  H -- Yes --> Z
+  H -- No --> O
+  O --> I
+  I --> J
+  J -- Yes --> Z
+  J -- No --> K
+  K --> P
+  P --> L
+  L --> M
+  M --> N
+  N -- Yes --> Z
+  N -- No --> R
+  R --> Y([Frontmatter updated])
+```
+
 ## Data Contract
 
 - Setting: `frontmatterProperty`

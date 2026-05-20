@@ -38,6 +38,25 @@ For watch mode while developing:
 npm run dev
 ```
 
+## Releasing
+
+The repository includes an automated release workflow in `.github/workflows/release.yml`.
+
+- The workflow runs when a tag is pushed.
+- It only proceeds when the tag is an annotated tag that GitHub marks as verified.
+- The tag name must exactly match the version in `manifest.json`.
+- It builds the plugin, generates release notes from non-merge commit subjects since the previous tag, and publishes the standard Obsidian release assets.
+- The published assets are `main.js`, `manifest.json`, and `styles.css` when that file exists.
+
+Example release commands:
+
+```bash
+git tag -s 1.0.1 -m "1.0.1"
+git push origin 1.0.1
+```
+
+If Actions in the repository are still limited to read-only tokens, enable read and write workflow permissions in the repository settings before tagging.
+
 ## Installing into a vault
 
 1. Place this folder inside `.obsidian/plugins/daily-note-worklog-linker`.
@@ -54,3 +73,5 @@ npm run dev
 ## Developer documentation
 
 Implementation details and maintenance notes are in [docs/developer-notes.md](docs/developer-notes.md).
+Release automation details are in [docs/release-workflow.md](docs/release-workflow.md).
+

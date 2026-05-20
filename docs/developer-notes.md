@@ -52,6 +52,16 @@ The plugin uses the Daily Notes core plugin through `app.internalPlugins.getPlug
 - It depends on Obsidian 1.4.4+ for `processFrontMatter()`.
 - It does not backfill historical notes; it only acts on future modifications.
 
+## Release Automation
+
+Release publishing is handled separately by the GitHub Actions workflow in `.github/workflows/release.yml`.
+
+- The workflow requires the pushed tag to be a GitHub-verified annotated tag.
+- The tag must match `manifest.json` exactly, which keeps Obsidian release metadata consistent.
+- Release notes are derived from commit subjects rather than hand-authored notes.
+
+Detailed release workflow documentation is in [docs/release-workflow.md](release-workflow.md).
+
 ## Verification
 
 Use these commands from the plugin root:
@@ -68,3 +78,6 @@ Manual verification:
 3. Edit any markdown note that is not today's daily note.
 4. Confirm the configured frontmatter list contains exactly one link to today's daily note.
 5. Edit the same note again and confirm no duplicate entry is added.
+
+For release verification, follow the release workflow guidance in [docs/release-workflow.md](release-workflow.md).
+

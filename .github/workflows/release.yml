@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          manifest_version="$(node -p \"require('./manifest.json').version\")"
+          manifest_version="$(node -p 'require("./manifest.json").version')"
           if [[ "$TAG_NAME" != "$manifest_version" ]]; then
             echo "Tag $TAG_NAME does not match manifest version $manifest_version." >&2
             exit 1

@@ -1,0 +1,7 @@
+{
+  "frontmatterProperty": "workedOn",
+  "ignoreDailyNote": true,
+  "excludedNotePatterns": [
+    "Templates/*"
+  ]
+}

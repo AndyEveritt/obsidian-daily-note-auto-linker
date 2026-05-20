@@ -8,16 +8,19 @@ import {
   moment,
   normalizePath,
 } from "obsidian";
+import type { Moment } from "moment";
 
 const DAILY_NOTES_PLUGIN_ID = "daily-notes";
 const DEFAULT_DAILY_NOTE_FORMAT = "YYYY-MM-DD";
 const DEFAULT_FRONTMATTER_PROPERTY = "workedOn";
+const EXCLUDED_NOTES_PLACEHOLDER = "Templates/*\n*/Example.md";
 const MODIFY_DEBOUNCE_MS = 1200;
 const SUPPRESSION_WINDOW_MS = 2000;
 
 interface DailyNoteWorklogLinkerSettings {
   frontmatterProperty: string;
   ignoreDailyNote: boolean;
+  excludedNotePatterns: string[];
 }
 
 interface DailyNotesPluginInstance {
@@ -34,9 +37,12 @@ interface DailyNoteReference {
   file: TFile | null;
 }
 
+type MomentFactory = () => Moment;
+
 const DEFAULT_SETTINGS: DailyNoteWorklogLinkerSettings = {
   frontmatterProperty: DEFAULT_FRONTMATTER_PROPERTY,
   ignoreDailyNote: true,
+  excludedNotePatterns: [],
 };
 
 export default class DailyNoteWorklogLinkerPlugin extends Plugin {
@@ -44,6 +50,7 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
 
   private readonly pendingUpdateTimers = new Map<string, number>();
   private readonly suppressedPaths = new Map<string, number>();
+  private excludedNoteMatchers: RegExp[] = [];
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -64,12 +71,17 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
       ...DEFAULT_SETTINGS,
       ...loadedData,
     };
-    this.settings.frontmatterProperty = this.getFrontmatterPropertyName();
+    this.normalizeSettings();
   }
 
   async saveSettings(): Promise<void> {
-    this.settings.frontmatterProperty = this.getFrontmatterPropertyName();
+    this.normalizeSettings();
     await this.saveData(this.settings);
+  }
+
+  async updateExcludedNotePatterns(rawValue: string): Promise<void> {
+    this.settings.excludedNotePatterns = this.normalizeExcludedNotePatterns(rawValue);
+    await this.saveSettings();
   }
 
   private async onVaultModify(file: TAbstractFile): Promise<void> {
@@ -78,6 +90,10 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
     }
 
     if (this.isSuppressed(file.path)) {
+      return;
+    }
+
+    if (this.isExcludedFile(file)) {
       return;
     }
 
@@ -123,6 +139,10 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
   private async ensureDailyNoteLink(path: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile) || file.extension !== "md") {
+      return;
+    }
+
+    if (this.isExcludedFile(file)) {
       return;
     }
 
@@ -229,7 +249,7 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
   }
 
   private getCurrentDailyNoteReference(sourceFile: TFile): DailyNoteReference {
-    const formattedPath = moment().format(this.getDailyNoteFormat());
+    const formattedPath = (moment as unknown as MomentFactory)().format(this.getDailyNoteFormat());
     const configuredFolder = this.getDailyNoteFolder();
     const configuredPath = normalizePath(
       configuredFolder ? `${configuredFolder}/${formattedPath}` : formattedPath,
@@ -302,6 +322,95 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
     return internalPlugins?.getPluginById?.(DAILY_NOTES_PLUGIN_ID)?.instance ?? null;
   }
 
+  private normalizeSettings(): void {
+    this.settings.frontmatterProperty = this.getFrontmatterPropertyName();
+    this.settings.excludedNotePatterns = this.normalizeExcludedNotePatterns(
+      this.settings.excludedNotePatterns,
+    );
+    this.rebuildExcludedNoteMatchers();
+  }
+
+  private normalizeExcludedNotePatterns(value: unknown): string[] {
+    if (typeof value === "string") {
+      return value
+        .split(/\r?\n/u)
+        .map((pattern) => this.normalizeExcludedNotePattern(pattern))
+        .filter((pattern): pattern is string => pattern !== null);
+    }
+
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((pattern) => this.normalizeExcludedNotePattern(pattern))
+      .filter((pattern): pattern is string => pattern !== null);
+  }
+
+  private normalizeExcludedNotePattern(value: unknown): string | null {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const trimmedValue = value.trim();
+    if (!trimmedValue) {
+      return null;
+    }
+
+    return normalizePath(trimmedValue).replace(/^\/+/, "");
+  }
+
+  private rebuildExcludedNoteMatchers(): void {
+    this.excludedNoteMatchers = this.settings.excludedNotePatterns.map((pattern) =>
+      this.createWildcardPatternMatcher(pattern),
+    );
+  }
+
+  private createWildcardPatternMatcher(pattern: string): RegExp {
+    let patternSource = "^";
+
+    for (const character of pattern) {
+      patternSource += character === "*" ? ".*" : this.escapePatternCharacter(character);
+    }
+
+    patternSource += "$";
+    return new RegExp(patternSource, "u");
+  }
+
+  private escapePatternCharacter(character: string): string {
+    switch (character) {
+      case "\\":
+      case "^":
+      case "$":
+      case "+":
+      case "?":
+      case ".":
+      case "(":
+      case ")":
+      case "|":
+      case "[":
+      case "]":
+      case "{":
+      case "}":
+        return `\\${character}`;
+      default:
+        return character;
+    }
+  }
+
+  private isExcludedFile(file: TFile): boolean {
+    if (!this.excludedNoteMatchers.length) {
+      return false;
+    }
+
+    const normalizedPath = normalizePath(file.path).replace(/^\/+/, "");
+    const candidatePaths = [normalizedPath, `/${normalizedPath}`];
+
+    return this.excludedNoteMatchers.some((matcher) =>
+      candidatePaths.some((candidatePath) => matcher.test(candidatePath)),
+    );
+  }
+
   private getFrontmatterPropertyName(): string {
     return this.settings.frontmatterProperty.trim() || DEFAULT_FRONTMATTER_PROPERTY;
   }
@@ -343,6 +452,22 @@ class DailyNoteWorklogLinkerSettingTab extends PluginSettingTab {
           this.plugin.settings.ignoreDailyNote = value;
           await this.plugin.saveSettings();
         });
+      });
+
+    new Setting(containerEl)
+      .setName("Excluded notes")
+      .setDesc(
+        "One pattern per line. Paths are vault-relative and * matches any part of the path, including subfolders. Examples: Templates/* and */Example.md.",
+      )
+      .addTextArea((textArea) => {
+        textArea
+          .setPlaceholder(EXCLUDED_NOTES_PLACEHOLDER)
+          .setValue(this.plugin.settings.excludedNotePatterns.join("\n"))
+          .onChange(async (value) => {
+            await this.plugin.updateExcludedNotePatterns(value);
+          });
+
+        textArea.inputEl.rows = 4;
       });
 
     new Setting(containerEl)

@@ -7,6 +7,7 @@ Daily Note Worklog Linker is an Obsidian plugin that appends the current daily n
 - Watches markdown file modifications in the vault.
 - Resolves today's daily note using the Daily Notes core plugin configuration when available.
 - Appends the daily note link to a configurable frontmatter list property.
+- Skips notes whose vault-relative paths match configurable exclusion patterns.
 - Skips writing duplicates when the property already contains the current daily note.
 - Avoids adding a self-link when you edit the daily note itself by default.
 
@@ -22,6 +23,15 @@ workedOn:
 ```
 
 If your Daily Notes core plugin stores notes in a folder, the plugin writes the correct path-based link instead.
+
+## Excluded notes
+
+The plugin can skip notes whose vault-relative paths match an exclusion pattern. Enter one pattern per line in the plugin settings.
+
+- `Templates/*` ignores every note inside `Templates`, including nested folders.
+- `*/Example.md` ignores any `Example.md` note no matter where it lives in the vault.
+
+The `*` wildcard matches any part of the path, including folder separators.
 
 ## Development
 
@@ -62,13 +72,14 @@ If Actions in the repository are still limited to read-only tokens, enable read 
 1. Place this folder inside `.obsidian/plugins/daily-note-worklog-linker`.
 2. Run `npm install` and `npm run build` if `main.js` is not already present.
 3. Enable the plugin from Obsidian's Community plugins settings.
-4. Optionally change the target frontmatter property in the plugin settings.
+4. Optionally change the target frontmatter property and add excluded-note patterns in the plugin settings.
 
 ## Notes
 
 - The plugin requires Obsidian 1.4.4 or newer because it uses `processFrontMatter()`.
 - If the Daily Notes core plugin is disabled, the plugin falls back to a `YYYY-MM-DD` daily note name at the vault root.
 - The plugin only updates markdown files.
+- Exclusion patterns are matched against vault-relative note paths and only support the `*` wildcard.
 
 ## Developer documentation
 

@@ -5,6 +5,7 @@ import {
   Setting,
   TAbstractFile,
   TFile,
+  TFolder,
   moment,
   normalizePath,
 } from "obsidian";
@@ -19,6 +20,7 @@ const SUPPRESSION_WINDOW_MS = 2000;
 
 interface DailyNoteWorklogLinkerSettings {
   frontmatterProperty: string;
+  autoCreateDailyNote: boolean;
   ignoreDailyNote: boolean;
   excludedNotePatterns: string[];
 }
@@ -41,6 +43,7 @@ type MomentFactory = () => Moment;
 
 const DEFAULT_SETTINGS: DailyNoteWorklogLinkerSettings = {
   frontmatterProperty: DEFAULT_FRONTMATTER_PROPERTY,
+  autoCreateDailyNote: true,
   ignoreDailyNote: true,
   excludedNotePatterns: [],
 };
@@ -146,7 +149,11 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
       return;
     }
 
-    const dailyNoteReference = this.getCurrentDailyNoteReference(file);
+    const dailyNoteReference = await this.getCurrentDailyNoteReference(file);
+    if (!dailyNoteReference.file) {
+      return;
+    }
+
     if (this.settings.ignoreDailyNote && this.isCurrentDailyNote(file, dailyNoteReference)) {
       return;
     }
@@ -248,13 +255,15 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
     return this.stripMarkdownExtension(file.path) === dailyNoteReference.configuredPath;
   }
 
-  private getCurrentDailyNoteReference(sourceFile: TFile): DailyNoteReference {
+  private async getCurrentDailyNoteReference(sourceFile: TFile): Promise<DailyNoteReference> {
     const formattedPath = (moment as unknown as MomentFactory)().format(this.getDailyNoteFormat());
     const configuredFolder = this.getDailyNoteFolder();
     const configuredPath = normalizePath(
       configuredFolder ? `${configuredFolder}/${formattedPath}` : formattedPath,
     );
-    const dailyNoteFile = this.resolveDailyNoteFile(formattedPath, configuredPath);
+    const dailyNoteFile = this.settings.autoCreateDailyNote
+      ? await this.ensureDailyNoteFile(formattedPath, configuredPath)
+      : this.resolveDailyNoteFile(formattedPath, configuredPath);
 
     return {
       formattedPath,
@@ -264,6 +273,31 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
         : configuredPath,
       file: dailyNoteFile,
     };
+  }
+
+  private async ensureDailyNoteFile(
+    formattedPath: string,
+    configuredPath: string,
+  ): Promise<TFile | null> {
+    const existingFile = this.resolveDailyNoteFile(formattedPath, configuredPath);
+    if (existingFile) {
+      return existingFile;
+    }
+
+    const dailyNotePath = normalizePath(`${configuredPath}.md`);
+
+    try {
+      await this.ensureParentFolders(dailyNotePath);
+      return await this.app.vault.create(dailyNotePath, "");
+    } catch (error) {
+      const createdFile = this.resolveDailyNoteFile(formattedPath, configuredPath);
+      if (createdFile) {
+        return createdFile;
+      }
+
+      console.error("Daily Note Worklog Linker could not create the daily note", error);
+      return null;
+    }
   }
 
   private resolveDailyNoteFile(formattedPath: string, configuredPath: string): TFile | null {
@@ -290,6 +324,52 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
     }
 
     return null;
+  }
+
+  private async ensureParentFolders(path: string): Promise<void> {
+    const folderPath = this.getParentFolderPath(path);
+    if (!folderPath) {
+      return;
+    }
+
+    const missingFolderPaths: string[] = [];
+    let currentFolderPath = folderPath;
+
+    while (currentFolderPath) {
+      const existingEntry = this.app.vault.getAbstractFileByPath(currentFolderPath);
+      if (existingEntry instanceof TFolder) {
+        break;
+      }
+
+      if (existingEntry) {
+        throw new Error(
+          `Cannot create daily note folder because ${currentFolderPath} already exists as a file.`,
+        );
+      }
+
+      missingFolderPaths.push(currentFolderPath);
+      currentFolderPath = this.getParentFolderPath(currentFolderPath);
+    }
+
+    for (const missingFolderPath of missingFolderPaths.reverse()) {
+      try {
+        await this.app.vault.createFolder(missingFolderPath);
+      } catch (error) {
+        const existingEntry = this.app.vault.getAbstractFileByPath(missingFolderPath);
+        if (!(existingEntry instanceof TFolder)) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  private getParentFolderPath(path: string): string {
+    const lastSeparatorIndex = path.lastIndexOf("/");
+    if (lastSeparatorIndex <= 0) {
+      return "";
+    }
+
+    return path.slice(0, lastSeparatorIndex);
   }
 
   private getDailyNoteFormat(): string {
@@ -324,6 +404,8 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
 
   private normalizeSettings(): void {
     this.settings.frontmatterProperty = this.getFrontmatterPropertyName();
+    this.settings.autoCreateDailyNote = this.settings.autoCreateDailyNote !== false;
+    this.settings.ignoreDailyNote = this.settings.ignoreDailyNote !== false;
     this.settings.excludedNotePatterns = this.normalizeExcludedNotePatterns(
       this.settings.excludedNotePatterns,
     );
@@ -445,6 +527,18 @@ class DailyNoteWorklogLinkerSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName("Create daily note automatically")
+      .setDesc(
+        "Create today's daily note in the background before linking to it when the note does not exist.",
+      )
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.autoCreateDailyNote).onChange(async (value) => {
+          this.plugin.settings.autoCreateDailyNote = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
       .setName("Skip the daily note itself")
       .setDesc("Avoid adding a self-link when you edit today's daily note.")
       .addToggle((toggle) => {
@@ -473,7 +567,7 @@ class DailyNoteWorklogLinkerSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Daily Notes integration")
       .setDesc(
-        "The plugin reads the Daily Notes core plugin format and folder when available. If Daily Notes is disabled, it falls back to YYYY-MM-DD in the vault root.",
+        "The plugin reads the Daily Notes core plugin format and folder when available. If Daily Notes is disabled, it falls back to YYYY-MM-DD in the vault root. Automatic creation can be disabled if you only want to link existing daily notes.",
       );
   }
 }

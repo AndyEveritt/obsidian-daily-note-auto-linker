@@ -6,6 +6,7 @@ Daily Note Worklog Linker is an Obsidian plugin that appends the current daily n
 
 - Watches markdown file modifications in the vault.
 - Resolves today's daily note using the Daily Notes core plugin configuration when available.
+- Optionally creates today's daily note file in the background before linking to it when the note does not exist yet.
 - Appends the daily note link to a configurable frontmatter list property.
 - Skips notes whose vault-relative paths match configurable exclusion patterns.
 - Skips writing duplicates when the property already contains the current daily note.
@@ -23,6 +24,8 @@ workedOn:
 ```
 
 If your Daily Notes core plugin stores notes in a folder, the plugin writes the correct path-based link instead.
+
+By default, if today's daily note does not exist yet, the plugin creates the markdown file silently in the configured Daily Notes location before it writes the link. You can disable that in the plugin settings if you only want to link daily notes that already exist.
 
 ## Excluded notes
 
@@ -72,12 +75,13 @@ If Actions in the repository are still limited to read-only tokens, enable read 
 1. Place this folder inside `.obsidian/plugins/daily-note-worklog-linker`.
 2. Run `npm install` and `npm run build` if `main.js` is not already present.
 3. Enable the plugin from Obsidian's Community plugins settings.
-4. Optionally change the target frontmatter property and add excluded-note patterns in the plugin settings.
+4. Optionally change the target frontmatter property, disable automatic daily-note creation, and add excluded-note patterns in the plugin settings.
 
 ## Notes
 
 - The plugin requires Obsidian 1.4.4 or newer because it uses `processFrontMatter()`.
 - If the Daily Notes core plugin is disabled, the plugin falls back to a `YYYY-MM-DD` daily note name at the vault root.
+- Missing daily note folders are created automatically when today's note needs to be created and automatic creation is enabled.
 - The plugin only updates markdown files.
 - Exclusion patterns are matched against vault-relative note paths and only support the `*` wildcard.
 

@@ -9,7 +9,9 @@ This plugin records when a note was worked on by appending the current daily not
 The implementation lives in `src/main.ts` and is built into `main.js` with esbuild.
 
 - `DailyNoteWorklogLinkerPlugin` registers a vault `modify` listener.
+- `DailyNoteWorklogLinkerPlugin` also registers a workspace `editor-change` listener to track recent local edit intent by file path.
 - A short debounce collapses rapid save events for the same file.
+- A local-intent gate can require a recent local editor change before processing a `modify` event.
 - Excluded-note patterns are normalized and compiled into regex matchers when settings load or save.
 - The daily note target is resolved first.
 - When `autoCreateDailyNote` is enabled, missing daily notes are created with `app.vault.create()`.
@@ -20,13 +22,14 @@ The implementation lives in `src/main.ts` and is built into `main.js` with esbui
 ## Control Flow
 
 1. Obsidian emits a vault `modify` event for a markdown file.
-2. The plugin ignores suppressed writes and files whose paths match an exclusion pattern.
-3. The plugin debounces the file path.
-4. The plugin resolves today's daily note path from the Daily Notes core plugin settings.
-5. If automatic creation is enabled and today's daily note file is missing, the plugin creates any missing folders and then creates the note in the background.
-6. If the daily note still does not exist, the plugin skips the frontmatter update.
-7. The plugin checks cached frontmatter for the configured property.
-8. If today's daily note is missing from the property, the plugin appends a wikilink to it.
+2. When enabled, the plugin requires a recent local `editor-change` signal for the same file path.
+3. The plugin ignores suppressed writes and files whose paths match an exclusion pattern.
+4. The plugin debounces the file path.
+5. The plugin resolves today's daily note path from the Daily Notes core plugin settings.
+6. If automatic creation is enabled and today's daily note file is missing, the plugin creates any missing folders and then creates the note in the background.
+7. If the daily note still does not exist, the plugin skips the frontmatter update.
+8. The plugin checks cached frontmatter for the configured property.
+9. If today's daily note is missing from the property, the plugin appends a wikilink to it.
 
 ## Program Flow Diagram
 
@@ -36,6 +39,7 @@ The diagram below maps the runtime path to the concrete methods in `DailyNoteWor
 flowchart TD
   subgraph Obsidian["Obsidian APIs and components"]
     A["app.vault.on('modify') event"]
+    A0["app.workspace.on('editor-change') event"]
     P["app.metadataCache.getFileCache(file)?.frontmatter"]
     Q["app.fileManager.processFrontMatter(file, callback)"]
     R["app.vault.create(...) / app.vault.createFolder(...)"]
@@ -45,6 +49,8 @@ flowchart TD
   subgraph Plugin["DailyNoteWorklogLinkerPlugin methods"]
     B["onVaultModify(file)"]
     C{"file instanceof TFile && file.extension === 'md'?"}
+    C0{"settings.requireLocalEditIntent?"}
+    C1{"hasRecentLocalEditIntent(file.path)?"}
     D{"isSuppressed(file.path)?"}
     E{"isExcludedFile(file)?"}
     F["queueFrontmatterUpdate(file)"]
@@ -64,6 +70,7 @@ flowchart TD
     AC["toFrontmatterList(frontmatter[propertyName])"]
     AD{"isSameDailyNoteValue(...) duplicate?"}
     AE["values.push('[[...]]') and assign frontmatter[propertyName]"]
+    AF["recordLocalEditIntent(info.file)"]
   end
 
   subgraph DailyNotes["Daily Notes resolution helpers"]
@@ -72,10 +79,15 @@ flowchart TD
     W["configuredPath = normalizePath(...)"]
   end
 
+  A0 --> AF
   A --> B
   B --> C
   C -- No --> Z([Return])
-  C -- Yes --> D
+  C --> C0
+  C0 -- No --> D
+  C0 -- Yes --> C1
+  C1 -- No --> Z
+  C1 -- Yes --> D
   D -- Yes --> Z
   D -- No --> E
   E -- Yes --> Z
@@ -124,6 +136,9 @@ flowchart TD
 - Setting: `ignoreDailyNote`
   - Default: `true`
   - Meaning: skip writing a self-link when today's daily note is the file being edited.
+- Setting: `requireLocalEditIntent`
+  - Default: `true`
+  - Meaning: require a recent local Obsidian editor change for the same file before reacting to a vault `modify` event, reducing false positives from sync software.
 - Setting: `excludedNotePatterns`
   - Default: `[]`
   - Meaning: skip processing notes whose vault-relative paths match any configured wildcard pattern.
@@ -160,6 +175,7 @@ The plugin uses the Daily Notes core plugin through `app.internalPlugins.getPlug
 - The plugin only responds to markdown files.
 - It depends on Obsidian 1.4.4+ for `processFrontMatter()`.
 - It does not backfill historical notes; it only acts on future modifications.
+- With local edit intent enabled, modify events from sync-only file changes are ignored.
 - Exclusion patterns only support the `*` wildcard.
 
 ## Release Automation
@@ -192,6 +208,8 @@ Manual verification:
 7. Edit the same note again and confirm no duplicate entry is added.
 8. With automatic creation enabled, delete today's daily note, edit another markdown note, and confirm the daily note is recreated automatically in the configured location.
 9. Disable automatic creation, delete today's daily note again, edit another markdown note, and confirm the plugin does not recreate the daily note or add a broken link.
+10. With local edit intent enabled, make a sync-only file update from another device and confirm no daily-note link is added locally until the note is edited in this Obsidian session.
+11. Disable local edit intent, repeat the same sync-only update, and confirm modify-driven linking behavior returns.
 
 For release verification, follow the release workflow guidance in [docs/release-workflow.md](release-workflow.md).
 

@@ -17,11 +17,13 @@ const DEFAULT_FRONTMATTER_PROPERTY = "workedOn";
 const EXCLUDED_NOTES_PLACEHOLDER = "Templates/*\n*/Example.md";
 const MODIFY_DEBOUNCE_MS = 1200;
 const SUPPRESSION_WINDOW_MS = 2000;
+const LOCAL_EDIT_INTENT_WINDOW_MS = 30000;
 
 interface DailyNoteWorklogLinkerSettings {
   frontmatterProperty: string;
   autoCreateDailyNote: boolean;
   ignoreDailyNote: boolean;
+  requireLocalEditIntent: boolean;
   excludedNotePatterns: string[];
 }
 
@@ -45,6 +47,7 @@ const DEFAULT_SETTINGS: DailyNoteWorklogLinkerSettings = {
   frontmatterProperty: DEFAULT_FRONTMATTER_PROPERTY,
   autoCreateDailyNote: true,
   ignoreDailyNote: true,
+  requireLocalEditIntent: true,
   excludedNotePatterns: [],
 };
 
@@ -53,13 +56,20 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
 
   private readonly pendingUpdateTimers = new Map<string, number>();
   private readonly suppressedPaths = new Map<string, number>();
+  private readonly recentLocalEditIntentPaths = new Map<string, number>();
   private excludedNoteMatchers: RegExp[] = [];
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
     this.addSettingTab(new DailyNoteWorklogLinkerSettingTab(this.app, this));
-    this.register(() => this.clearPendingUpdates());
+    this.register(() => this.clearRuntimeState());
+
+    this.registerEvent(
+      this.app.workspace.on("editor-change", (_editor, info) => {
+        this.recordLocalEditIntent(info.file);
+      }),
+    );
 
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
@@ -89,6 +99,10 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
 
   private async onVaultModify(file: TAbstractFile): Promise<void> {
     if (!(file instanceof TFile) || file.extension !== "md") {
+      return;
+    }
+
+    if (this.settings.requireLocalEditIntent && !this.hasRecentLocalEditIntent(file.path)) {
       return;
     }
 
@@ -123,6 +137,44 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
     }
 
     this.pendingUpdateTimers.clear();
+  }
+
+  private clearRuntimeState(): void {
+    this.clearPendingUpdates();
+    this.recentLocalEditIntentPaths.clear();
+    this.suppressedPaths.clear();
+  }
+
+  private recordLocalEditIntent(file: TFile | null): void {
+    if (!(file instanceof TFile) || file.extension !== "md") {
+      return;
+    }
+
+    const now = Date.now();
+    const expiresAt = now + LOCAL_EDIT_INTENT_WINDOW_MS;
+    const staleThreshold = now - LOCAL_EDIT_INTENT_WINDOW_MS;
+
+    this.recentLocalEditIntentPaths.set(file.path, expiresAt);
+
+    for (const [candidatePath, candidateExpiresAt] of this.recentLocalEditIntentPaths) {
+      if (candidateExpiresAt < staleThreshold) {
+        this.recentLocalEditIntentPaths.delete(candidatePath);
+      }
+    }
+  }
+
+  private hasRecentLocalEditIntent(path: string): boolean {
+    const expiresAt = this.recentLocalEditIntentPaths.get(path);
+    if (expiresAt === undefined) {
+      return false;
+    }
+
+    if (expiresAt <= Date.now()) {
+      this.recentLocalEditIntentPaths.delete(path);
+      return false;
+    }
+
+    return true;
   }
 
   private isSuppressed(path: string): boolean {
@@ -406,6 +458,7 @@ export default class DailyNoteWorklogLinkerPlugin extends Plugin {
     this.settings.frontmatterProperty = this.getFrontmatterPropertyName();
     this.settings.autoCreateDailyNote = this.settings.autoCreateDailyNote !== false;
     this.settings.ignoreDailyNote = this.settings.ignoreDailyNote !== false;
+    this.settings.requireLocalEditIntent = this.settings.requireLocalEditIntent !== false;
     this.settings.excludedNotePatterns = this.normalizeExcludedNotePatterns(
       this.settings.excludedNotePatterns,
     );
@@ -544,6 +597,18 @@ class DailyNoteWorklogLinkerSettingTab extends PluginSettingTab {
       .addToggle((toggle) => {
         toggle.setValue(this.plugin.settings.ignoreDailyNote).onChange(async (value) => {
           this.plugin.settings.ignoreDailyNote = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Only react to local editor changes")
+      .setDesc(
+        "Ignore vault modify events unless the note was edited in this Obsidian session recently. Helps avoid false positives from cloud sync tools.",
+      )
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.requireLocalEditIntent).onChange(async (value) => {
+          this.plugin.settings.requireLocalEditIntent = value;
           await this.plugin.saveSettings();
         });
       });

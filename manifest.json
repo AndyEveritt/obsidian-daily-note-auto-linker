@@ -1,7 +1,7 @@
 {
   "id": "daily-note-worklog-linker",
   "name": "Daily Note Worklog Linker",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "minAppVersion": "1.4.4",
   "description": "Adds today's daily note to a frontmatter list whenever a markdown note is modified.",
   "author": "Andy Everitt",
